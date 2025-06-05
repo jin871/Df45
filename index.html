@@ -333,59 +333,58 @@
             }
         };
         // ルーム参加
-        document.getElementById("joinButton").onclick = async () => {
-            const playerName = document.getElementById("playerName").value.trim();
-            const roomId = document.getElementById("roomIDInput").value.trim();
-            if (!playerName || !roomId) {
-                showError("プレイヤー名とルームIDを入力してください");
-                return;
-            }
-            myName = playerName;
-            roomRef = ref(db, `rooms/${roomId}`);
-            try {
-                const snapshot = await get(roomRef);
-                if (!snapshot.exists()) {
-                    showError("ルームが存在しません");
-                    return;
-                }
-                const room = snapshot.val();
-                if (room.players.length >= 4) {
-                    showError("ルームが満員です");
-                    return;
-                }
-                if (room.players.includes(myName)) {
-                    showError("このプレイヤー名は既に使用されています");
-                    return;
-                }
-                room.players.push(myName);
-                const remainingDeck = room.deck;
-                const cardsPerPlayer = Math.floor(remainingDeck.length / (4 - room.players.length));
-                playerHands[myName] = dealCardsForOnePlayer(remainingDeck, cardsPerPlayer);
-                room.hands[myName] = playerHands[myName];
-                room.turnOrder = room.players;
-                if (room.players.length === 4) {
-                    room.gameStarted = true;
-                }
-                const updates = {
-                    players: room.players,
-                    hands: room.hands,
-                    turnOrder: room.turnOrder,
-                    gameStarted: room.gameStarted,
-                    deck: remainingDeck.slice(cardsPerPlayer) // 残りのデッキを更新
-                };
-                await update(roomRef, updates);
-                displayRoomId(roomId);
-                document.getElementById("lobbyArea").style.display = "none";
-                document.getElementById("gameArea").style.display = "block";
-                displayHand(); // 参加者に手札を表示
-                displayPlayerStatus(); // ステータスを表示
-                log(`ルーム参加: ${roomId}, プレイヤー${room.players.length} (${myName}) に手札配布 (${playerHands[myName].length}枚)`);
-                listenRoom();
-            } catch (error) {
-                showError(`ルーム参加失敗: ${error.message}`);
-            }
+document.getElementById("joinButton").onclick = async () => {
+    const playerName = document.getElementById("playerName").value.trim();
+    const roomId = document.getElementById("roomIDInput").value.trim();
+    if (!playerName || !roomId) {
+        showError("プレイヤー名とルームIDを入力してください");
+        return;
+    }
+    myName = playerName;
+    roomRef = ref(db, `rooms/${roomId}`);
+    try {
+        const snapshot = await get(roomRef);
+        if (!snapshot.exists()) {
+            showError("ルームが存在しません");
+            return;
+        }
+        const room = snapshot.val();
+        if (room.players.length >= 4) {
+            showError("ルームが満員です");
+            return;
+        }
+        if (room.players.includes(myName)) {
+            showError("このプレイヤー名は既に使用されています");
+            return;
+        }
+        room.players.push(myName);
+        const remainingDeck = [...room.deck]; // デッキをコピー
+        const cardsPerPlayer = Math.floor(remainingDeck.length / (4 - room.players.length + 1)); // 残りのプレイヤー数で割る
+        playerHands[myName] = dealCardsForOnePlayer(remainingDeck, cardsPerPlayer);
+        room.hands = { ...room.hands, [myName]: playerHands[myName] }; // 既存の手札を保持しつつ追加
+        room.turnOrder = room.players;
+        if (room.players.length === 4) {
+            room.gameStarted = true;
+        }
+        const updates = {
+            players: room.players,
+            hands: room.hands,
+            turnOrder: room.turnOrder,
+            gameStarted: room.gameStarted,
+            deck: remainingDeck.slice(cardsPerPlayer) // 残りのデッキを更新
         };
-
+        await update(roomRef, updates);
+        displayRoomId(roomId);
+        document.getElementById("lobbyArea").style.display = "none";
+        document.getElementById("gameArea").style.display = "block";
+        displayHand(); // 参加者に手札を表示
+        displayPlayerStatus(); // ステータスを表示
+        log(`ルーム参加: ${roomId}, プレイヤー${room.players.length} (${myName}) に手札配布 (${playerHands[myName].length}枚)`);
+        listenRoom();
+    } catch (error) {
+        showError(`ルーム参加失敗: ${error.message}`);
+    }
+};
         // ルームの変更を監視
         function listenRoom() {
             onValue(roomRef, (snapshot) => {
