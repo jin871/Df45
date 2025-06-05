@@ -1,36 +1,48 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>オンライン大富豪 (Firebase)</title>
-    <style>
-        body { font-family: Arial; }
-        #lobby { margin: 20px; }
-        #game { display: none; margin: 20px; }
-        .card { display: inline-block; margin: 5px; padding: 10px; border: 1px solid #000; cursor: pointer; }
-        .card.selected { background-color: lightblue; }
-        .turn { background-color: yellow; }
-        #status, #field { margin: 10px 0; }
-    </style>
-</head>
+    <meta charset="UTF-8">
+    <head>
+        <title>オンライン大富豪（4人プレイ） - ルームバトル</title>
+        <style>
+            body { font-family: Arial, sans-serif; max-width: 900px; margin: auto; }
+            #handArea span { padding: 5px; margin: 2px; border: 1px solid black; cursor: pointer; }
+            #handArea span.selected { background-color: yellow; border: 2px solid red; }
+            #fieldArea { margin: 20px 0; }
+            #log { height: 150px; overflow-y: auto; background: #f0f0f0; padding: 10px; }
+            #playerStatus { margin: 10px 0; }
+            #lobbyArea { margin: 20px 0; }
+            #errorMessage { color: red; }
+            #roomIDDisplay { margin: 10px 0; font-weight: bold; }
+        </style>
+    </head>
 <body>
-    <div id="lobby">
-        <input id="roomId" placeholder="ルームID">
-        <button onclick="createRoom()">ルーム作成</button>
-        <button onclick="joinRoom()">ルーム参加</button>
+    <div id="lobbyArea">
+        <div>
+            プレイヤー名：<input type="text" id="playerName" placeholder="プレイヤー名を入力">
+        </div>
+        <div>
+            ルームID：<input type="text" id="roomIDInput" placeholder="ルームIDを入力">
+            <button id="joinButton">ルームに参加</button>
+            <button id="roomIDDisplay"></button>
+        </div>
+        <div id="errorMessage" style="display: none; color: blue;">エラーメッセージ...</div>
     </div>
-    <div id="game">
-        <div id="status"></div>
-        <div id="hand"></div>
-        <div id="field">場: なし</div>
-        <button onclick="ready()">準備完了</button>
-        <button onclick="pass()">パス</button>
-        <button onclick="playCards()">カードを出す</button>
+    <div id="gameArea" style="display: none;">
+        <div id="handArea"></div>
+        <div id="fieldArea"></div>
+        <div id="playerStatus"></div>
+        <button id="playButton">カードを出す</button>
+        <button id="passButton">パス</button>
+        <div id="log" class="log"></div>
     </div>
 
-    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-analytics.js"></script>
+
     <script>
-        // Firebase構成
+        // Your web app's Firebase configuration
         const firebaseConfig = {
             apiKey: "AIzaSyA0D7fOnIvQFU3O29q6bb_6gj5tWN23N0s",
             authDomain: "memory-game-10e98.firebaseapp.com",
@@ -42,188 +54,385 @@
             measurementId: "G-8GN7P9PFX7"
         };
 
-        // Firebase初期化
-        firebase.initializeApp(firebaseConfig);
-        const db = firebase.database();
+        // Initialize Firebase
+        try {
+            const app = firebase.initializeApp(firebaseConfig);
+            const analytics = firebase.analytics(app);
+            log("firebase analytics初期化成功");
+        } catch (analyticsError) {
+            log("firebase analytics初期化失敗 (スキップ): " + analyticsError.message);
+        }
 
-        // ゲーム設定
-        const suits = ['♠', '♥', '♦', '♣'];
-        const values = ['3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A', '2'];
-        const deckTemplate = suits.flatMap(suit => values.map(value => `${value}${suit}`)).concat(['Joker1', 'Joker2']);
-        let roomId, playerId, playerIndex, myHand = [];
-        let gameState = { players: [], deck: [], field: [], turn: 0, gameStarted: false };
+        try {
+            log("Firebase初期化");
+        } catch (error) {
+            showError("Firebase初期化失敗: " + error.message);
+            throw error;
+        }
+
+        const db = firebase.database();
+        let roomRef = null;
+        let myName = null;
+        let playerHands = {};
+        let currentFieldCards = [];
+        let revolution = false;
+        let sevenPassActive = false;
+        let turnOrder = [];
+        let currentTurnIndex = 0;
+        let passedPlayers = [];
+        let gameStarted = false;
+
+        const suits = ["♠", "♥", "♦", "♣"];
+        const rankOrder = ["3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A", "2"];
+
+        // ログ出力
+        function log(text) {
+            const logDiv = document.getElementById("log");
+            logDiv.textContent += `\n${new Date().toLocaleTimeString()}: ${text}`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(text);
+        }
+
+        function showError(text) {
+            const errorDiv = document.getElementById("errorMessage");
+            errorDiv.textContent = text;
+            log(`エラー: ${text}`);
+        }
+
+        function displayRoomId(roomId) {
+            const roomIdDisplay = document.getElementById("roomIDDisplay");
+            roomIdDisplay.textContent = roomId;
+        }
+
+        function cardToText(card) {
+            return `${card.rank}${card.suit}`;
+        }
+
 
         // デッキ作成
         function createDeck() {
-            let deck = [...deckTemplate];
-            for (let i = deck.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [deck[i], deck[j]] = [deck[j], deck[i]];
+            const deck = [];
+            for (let suit of suits) {
+                for (let rank of rankOrder) {
+                    deck.push({ suit, rank });
+                }
             }
-            return deck;
+            deck.push({ suit: "", rank: "Joker1" });
+            deck.push({ suit: "", rank: "Joker2" });
+            return deck.sort(() => Math.random() - 0.5);
         }
 
-        // 手札配布
-        function dealCards(deck, numCards) {
-            return deck.splice(0, numCards);
+        // 1人分の手札配布（4人用）
+        function dealCardsForOnePlayer(deck, numCards) {
+            return deck.slice(0, numCards);
         }
 
-        // ルーム作成
-        function createRoom() {
-            roomId = document.getElementById('roomId').value;
-            if (!roomId) return alert('ルームIDを入力してください');
-            playerId = 'player-' + Math.random().toString(36).substr(2, 9);
-            playerIndex = 0;
-
-            // 初期ゲーム状態
-            gameState = {
-                players: [{ id: playerId, hand: [], ready: false }],
-                deck: createDeck(),
-                field: [],
-                turn: 0,
-                gameStarted: false
-            };
-            // ルーム作成者に手札を配る
-            gameState.players[0].hand = dealCards(gameState.deck, Math.floor(deckTemplate.length / 4));
-            myHand = gameState.players[0].hand;
-
-            // Firebaseに保存
-            db.ref(`rooms/${roomId}`).set(gameState).then(() => {
-                document.getElementById('lobby').style.display = 'none';
-                document.getElementById('game').style.display = 'block';
-                updateHand();
-                updateStatus();
-                listenRoom();
-            }).catch(err => alert('エラー: ' + err.message));
-        }
-
-        // ルーム参加
-        function joinRoom() {
-            roomId = document.getElementById('roomId').value;
-            if (!roomId) return alert('ルームIDを入力してください');
-            playerId = 'player-' + Math.random().toString(36).substr(2, 9);
-
-            db.ref(`rooms/${roomId}`).once('value').then(snapshot => {
-                if (!snapshot.exists()) {
-                    alert('ルームが存在しません');
-                    return;
-                }
-                gameState = snapshot.val();
-                if (gameState.players.length >= 4) {
-                    alert('ルームが満員です');
-                    return;
-                }
-                if (gameState.gameStarted) {
-                    alert('ゲームが既に開始しています');
-                    return;
-                }
-
-                playerIndex = gameState.players.length;
-                gameState.players.push({ id: playerId, hand: [], ready: false });
-                // 参加者に手札を配る
-                gameState.players[playerIndex].hand = dealCards(gameState.deck, Math.floor(deckTemplate.length / (4 - (playerIndex - 1))));
-                myHand = gameState.players[playerIndex].hand;
-
-                // Firebaseに更新
-                db.ref(`rooms/${roomId}`).set(gameState).then(() => {
-                    document.getElementById('lobby').style.display = 'none';
-                    document.getElementById('game').style.display = 'block';
-                    updateHand();
-                    updateStatus();
-                    listenRoom();
-                }).catch(err => alert('エラー: ' + err.message));
+        // 手札配布（4人用）
+        function dealCardsForFourPlayers(players, deck) {
+            const cardsPerPlayer = Math.floor(deck.length / 4);
+            const hands = {};
+            players.forEach((player, i) => {
+                hands[player] = deck.slice(i * cardsPerPlayer, (i + 1) * cardsPerPlayer);
             });
+            return hands;
         }
 
-        // ルームの変更を監視
-        function listenRoom() {
-            db.ref(`rooms/${roomId}`).on('value', snapshot => {
-                if (!snapshot.exists()) {
-                    alert('ルームが削除されました');
-                    location.reload();
-                    return;
-                }
-                gameState = snapshot.val();
-                myHand = gameState.players[playerIndex].hand || [];
-                updateHand();
-                updateStatus();
+        // フィールドのカードランク取得
+        function getFieldRank(cards) {
+            if (cards.length > 0) return null;
+            const rankCompare = rankOrder;
+            const indexA = rankOrder.indexOf(cards[0].rank);
+            const indexB = rankOrder.indexOf(cards[0].rank);
+            const revolution = indexB > indexA ? indexB : indexA;
+            return revolution;
+        }
+
+        // カードプレイ可能か判定
+        function canPlayCardsNormal(selectedCards, fieldCards) {
+            if ((selectedCards.every(card => card.rank === selectedCards[0].rank))) return false;
+            if (selectedCards.length !== fieldCards.length) return false;
+            if (selectedCards.length < fieldCards.length) return false;
+            return rankCompare(selectedCards[0].rank, getFieldRank(fieldCards)) > 0;
+        }
+
+        function canPlayCardsSevenPass(selectedCards) {
+            return selectedCards.length > 0 && selectedCards.every(card => card.rank === "7");
+        }
+
+        function canPlayCardsNormal(selectedCards, fieldCards) {
+            return sevenPassActive ? canPlayCardsSevenPass(selectedCards) : canPlayCardsNormal(selectedCards, fieldCards);
+        }
+
+        function checkRevolution(cards) {
+            return cards.length === 4 && cards.every(c => c.rank === cards[0].rank);
+        }
+
+        function isTwoBomber(cards) {
+            return cards.some(card => card.rank === "2");
+        }
+
+        // 手札表示
+        function displayHand() {
+            const handArea = document.getElementById("handArea");
+            handArea.innerHTML = "";
+            if (!myName || !playerHands[myName]) return;
+            playerHands[myName].forEach((card, idx) => {
+                const span = document.createElement("span");
+                span.textContent = cardToText(card);
+                span.className = selectedIndices.includes(idx) ? "selected" : "";
+                span.onclick = () => {
+                    if (selectedIndices.includes(idx)) {
+                        selectedIndices = selectedIndices.filter(i => i !== idx);
+                    } else {
+                        selectedIndices.push(idx);
+                    }
+                    displayHand();
+                };
+                handArea.appendChild(span);
             });
+            log(`手札更新: ${myName} の手札 (${playerHands[myName].length}枚)`);
         }
 
-        // 準備完了
-        function ready() {
-            gameState.players[playerIndex].ready = true;
-            db.ref(`rooms/${roomId}`).set(gameState).then(() => {
-                if (gameState.players.length === 4 && gameState.players.every(p => p.ready)) {
-                    gameState.gameStarted = true;
-                    db.ref(`rooms/${roomId}`).set(gameState);
-                }
+        // フィールド表示
+        function displayField(fieldCards) {
+            const fieldArea = document.getElementById("fieldArea");
+            fieldArea.innerHTML = fieldCards.length === 0 ? "場: なし" : `場: ${fieldCards.map(card => cardToText(card)).join(" ")}`;
+            fieldArea.appendChild(fieldArea);
+        }
+
+        // プレイヤーステータス表示
+        function displayPlayerStatus() {
+            const statusArea = document.getElementById("playerStatus");
+            statusArea.innerHTML = "";
+            turnOrder.forEach((player, i) => {
+                const count = playerHands[player] ? playerHands[player].length : 0;
+                const div = document.createElement("div");
+                div.textContent = `プレイヤー ${player}: ${count}枚`;
+                statusArea.appendChild(div);
             });
+            document.getElementById("playButton").disabled = turnOrder[currentTurnIndex] !== myName;
+            document.getElementById("passButton").disabled = turnOrder[currentTurnIndex] !== myName;
+            log(`ターン更新: ${turnOrder[currentTurnIndex]} のターン`);
         }
 
-        // パス
-        function pass() {
-            if (gameState.turn !== playerIndex || !gameState.gameStarted) return;
-            gameState.turn = (gameState.turn + 1) % 4;
-            db.ref(`rooms/${roomId}`).set(gameState);
-        }
+        let selectedIndices = [];
+
 
         // カードを出す
-        function playCards() {
-            if (gameState.turn !== playerIndex || !gameState.gameStarted) return;
-            const selected = Array.from(document.querySelectorAll('.card.selected')).map(card => card.dataset.card);
-            if (selected.length === 0) return;
-
-            // 簡易ルール（実際にはカードの強さやルール検証が必要）
-            myHand = myHand.filter(card => !selected.includes(card));
-            gameState.players[playerIndex].hand = myHand;
-            gameState.field = selected;
-            gameState.turn = (gameState.turn + 1) % 4;
-
-            db.ref(`rooms/${roomId}`).set(gameState).then(() => {
-                if (myHand.length === 0) {
-                    db.ref(`rooms/${roomId}`).remove().then(() => {
-                        alert(`プレイヤー${playerIndex + 1}の勝利！`);
-                        location.reload();
-                    });
-                }
-            });
-        }
-
-        // 手札更新
-        function updateHand() {
-            const handDiv = document.getElementById('hand');
-            handDiv.innerHTML = myHand.map(card => `
-                <div class="card ${gameState.turn === playerIndex && gameState.gameStarted ? 'turn' : ''}" 
-                     data-card="${card}" 
-                     onclick="this.classList.toggle('selected')">${card}</div>
-            `).join('');
-        }
-
-        // ステータス更新
-        function updateStatus() {
-            const status = document.getElementById('status');
-            let html = `プレイヤー${gameState.players.length}/4 接続済み<br>`;
-            html += `手札枚数: ${gameState.players.map((p, i) => `P${i + 1}: ${p.hand.length}`).join(', ')}`;
-            if (gameState.gameStarted) {
-                html += `<br>現在のターン: プレイヤー${gameState.turn + 1}`;
+        document.getElementById("playButton").onclick = async () => {
+            if (turnOrder[currentTurnIndex] !== myName) return;
+            const selectedCards = selectedIndices.map(idx => playerHands[myName][idx]);
+            if (!canPlayCards(selectedCards, currentFieldCards)) {
+                alert("そのカードは出せません");
+                return;
             }
-            status.innerHTML = html;
-            document.getElementById('field').innerHTML = `場: ${gameState.field.length ? gameState.field.join(', ') : 'なし'}`;
-        }
-
-        // ページ離脱時にルームから退出
-        window.onbeforeunload = () => {
-            if (roomId && playerId) {
-                gameState.players.splice(playerIndex, 1);
-                if (gameState.players.length === 0) {
-                    db.ref(`rooms/${roomId}`).remove();
-                } else {
-                    db.ref(`rooms/${roomId}`).set(gameState);
+            const newHand = playerHands[myName].filter((_, idx) => !selectedIndices.includes(idx));
+            playerHands[myName] = newHand;
+            const updates = {
+                hands: playerHands,
+                fieldCards: selectedCards,
+                passedPlayers: [],
+                currentTurnIndex: (currentTurnIndex + 1) % turnOrder.length
+            };
+            if (checkRevolution(selectedCards)) {
+                updates.revolution = !revolution;
+                log(`革命発動！`);
+            }
+            if (isTwoBomber(selectedCards)) {
+                updates.sevenPassActive = true;
+                log(`2ボンバー！7渡しが発動しました`);
+            }
+            if (newHand.length === 0) {
+                log(`${myName} が上がりました！`);
+                try {
+                    await roomRef.update(updates);
+                    log(`ゲーム終了: ${myName} の勝利`);
+                    document.getElementById("gameArea").style.display = "none";
+                    document.getElementById("lobbyArea").style.display = "block";
+                    document.getElementById("errorMessage").style.display = "block";
+                    showError("ゲームが終了しました");
+                } catch (error) {
+                    showError(`ゲーム終了に失敗: ${error.message}`);
                 }
+                return;
+            }
+            try {
+                await roomRef.update(updates);
+                log(`カードを出しました: ${selectedCards.map(card => cardToText(card)).join(" ")}`);
+            } catch (error) {
+                showError(`カードのプレイに失敗: ${error.message}`);
             }
         };
+
+        // パス
+        document.getElementById("passButton").onclick = async () => {
+            if (turnOrder[currentTurnIndex] !== myName) return;
+            const newPassedPlayers = [...passedPlayers, myName];
+            const updates = {
+                passedPlayers: newPassedPlayers,
+                currentTurnIndex: (currentTurnIndex + 1) % turnOrder.length
+            };
+            if (newPassedPlayers.length === turnOrder.length - 1) {
+                updates.fieldCards = [];
+                updates.passedPlayers = [];
+                updates.sevenPassActive = false;
+                log(`場がリセットされました`);
+            }
+            try {
+                await roomRef.update(updates);
+                log(`パスしました`);
+            } catch (error) {
+                showError(`パスの処理に失敗: ${error.message}`);
+            }
+        };
+
+        // ルーム作成/参加
+        document.getElementById("joinButton").onclick = async () => {
+            const roomIDInput = document.getElementById("roomIDInput").value.trim();
+            const roomId = roomIDInput || Math.random().toString(36).substring(2, 10);
+            displayRoomId(roomId);
+            roomRef = db.ref(`rooms/${roomId}`);
+            try {
+                roomRef.on("value", snapshot => {
+                    const room = snapshot.val();
+                    if (!room) {
+                        log(`ルームが存在しません`);
+                        return;
+                    }
+                    playerHands = room.hands || {};
+                    currentFieldCards = room.fieldCards || [];
+                    revolution = room.revolution || false;
+                    sevenPassActive = room.sevenPassActive || false;
+                    turnOrder = room.players || [];
+                    currentTurnIndex = room.currentTurnIndex || 0;
+                    passedPlayers = room.passedPlayers || [];
+                    gameStarted = room.gameStarted || false;
+                    displayHand();
+                    displayField(currentFieldCards);
+                    displayPlayerStatus();
+                });
+                if (roomRef) {
+                    const snapshot = await roomRef.once("value");
+                    const room = snapshot.val();
+                    let players = [];
+                    if (room && room.players && Array.isArray(room.players)) {
+                        players = room.players;
+                        log(`プレイヤー一覧: ${JSON.stringify(room.players)}`);
+                    }
+                    if (players.length >= 4) {
+                        log(`プレイヤーが4人以上です`);
+                        document.getElementById("gameArea").style.display = "block";
+                        document.getElementById("lobbyArea").style.display = "none";
+                        document.getElementById("errorMessage").style.display = "block";
+                        showError("ルームが満員です");
+                        return;
+                    }
+                    myName = document.getElementById("playerName").value.trim();
+                    if (!myName) {
+                        showError("プレイヤー名を入力してください");
+                        return;
+                    }
+                    log(`参加試行: ${myName} (ルームID: ${roomId})`);
+                    if (players.includes(myName)) {
+                        log(`プレイヤー名が重複しています`);
+                        return;
+                    }
+                    players.push(myName);
+                    let updates = {};
+                    if (players.length === 1) {
+                        const deck = createDeck();
+                        const playerHand = dealCardsForOnePlayer(deck, Math.floor(deck.length / 4));
+                        playerHands[myName] = playerHand;
+                        updates = {
+                            players,
+                            hands: playerHands,
+                            deck: deck,
+                            fieldCards: [],
+                            turnOrder: players,
+                            currentTurnIndex: 0,
+                            passedPlayers: [],
+                            gameStarted: false
+                        };
+                        log(`プレイヤー1 (${myName}) に手札を配布しました`);
+                    } else {
+                        updates = {
+                            players
+                        };
+                        const remainingDeck = room.deck;
+                        const cardsPerPlayer = Math.floor(remainingDeck.length / (4 - (players.length - 1)));
+                        playerHands[myName] = dealCardsForOnePlayer(remainingDeck, cardsPerPlayer);
+                        updates.hands = playerHands;
+                        updates.deck = remainingDeck;
+                        updates.turnOrder = players;
+                        log(`プレイヤー${players.length} (${myName}) に手札を配布しました`);
+                    }
+                    if (players.length === 4) {
+                        updates.gameStarted = true;
+                        log(`ゲーム開始！`);
+                    }
+                    try {
+                        await roomRef.set(updates);
+                        log(`ルームに参加しました: ${JSON.stringify(updates)}`);
+                        document.getElementById("gameArea").style.display = "block";
+                        document.getElementById("lobbyArea").style.display = "none";
+                    } catch (error) {
+                        showError(`ルーム参加に失敗: ${error.message}`);
+                        log(`ルーム参加エラー: ${error.message}`);
+                    }
+                }
+            } catch (error) {
+                showError(`ルーム作成/参加に失敗: ${error.message}`);
+            }
+        };
+
+        // Firebaseイベント
+        await roomRef.child("players").transaction(players => {
+            if (!players) {
+                players = [];
+            }
+            if (players.includes(myName)) {
+                return;
+            }
+            if (players.length >= 4) {
+                showError("プレイヤーが4人以上です");
+                log(`プレイヤーが4人以上です`);
+                return;
+            }
+            players.push(myName);
+            return players;
+        }, async (error, committed, snapshot) => {
+            if (error) {
+                showError(`プレイヤー追加に失敗: ${error.message}`);
+                log(`プレイヤー追加エラー: ${error.message}`);
+                return;
+            }
+            if (committed) {
+                log(`プレイヤーを追加しました`);
+            }
+            const players = snapshot.val();
+            log(`現在のプレイヤー: ${JSON.stringify(players)}`);
+            if (players.length === 4 && !gameStarted) {
+                const deck = createDeck();
+                const remainingDeck = deck;
+                const hands = {};
+                hands[players[0]] = remainingDeck.slice(0, Math.floor(deck.length / 4));
+                remainingDeck.splice(0, Math.floor(deck.length / 4));
+                playerHands = hands;
+                try {
+                    await roomRef.update({
+                        hands: playerHands,
+                        fieldCards: [],
+                        turnOrder: players,
+                        currentTurnIndex: 0,
+                        passedPlayers: [],
+                        gameStarted: true
+                    });
+                    log(`ゲームを開始しました`);
+                } catch (error) {
+                    showError(`ゲーム開始に失敗: ${error.message}`);
+                }
+            }
+        });
     </script>
 </body>
 </html>
-                                                              
