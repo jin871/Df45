@@ -168,7 +168,10 @@
         function displayHand() {
             const handArea = document.getElementById("handArea");
             handArea.innerHTML = "";
-            if (!myName || !playerHands[myName]) return;
+            if (!myName || !playerHands[myName]) {
+                log("手札表示失敗: myNameまたはplayerHandsが未定義");
+                return;
+            }
             playerHands[myName].forEach((card, idx) => {
                 const span = document.createElement("span");
                 span.textContent = cardToText(card);
@@ -239,8 +242,10 @@
                     document.getElementById("lobbyArea").style.display = "block";
                 } catch (error) {
                     showError(`ゲーム終了失敗: ${error.message}`);
-                     return;
-            }
+                }
+                return;
+                }
+
             try {
                 await roomRef.update(updates);
                 selectedIndices = [];
@@ -307,14 +312,17 @@
                 displayRoomId(roomId);
                 document.getElementById("lobbyArea").style.display = "none";
                 document.getElementById("gameArea").style.display = "block";
-                log(`ルーム作成: ${roomId}, プレイヤー1 (${myName}) に手札配布`);
+                // 手札を即座に表示
+                displayHand();
+                log(`ルーム作成: ${roomId}, プレイヤー1 (${myName}) に手札配布 (${playerHands[myName].length}枚)`);
                 listenRoom();
             } catch (error) {
                 showError(`ルーム作成失敗: ${error.message}`);
             }
         };
 
-            // ルーム参加
+
+        // ルーム参加
         document.getElementById("joinButton").onclick = async () => {
             const playerName = document.getElementById("playerName").value.trim();
             const roomId = document.getElementById("roomIDInput").value.trim();
@@ -357,7 +365,8 @@
                 displayRoomId(roomId);
                 document.getElementById("lobbyArea").style.display = "none";
                 document.getElementById("gameArea").style.display = "block";
-                log(`ルーム参加: ${roomId}, プレイヤー${room.players.length} (${myName}) に手札配布`);
+                displayHand(); // 参加時に手札を表示
+                log(`ルーム参加: ${roomId}, プレイヤー${room.players.length} (${myName}) に手札配布 (${playerHands[myName].length}枚)`);
                 listenRoom();
             } catch (error) {
                 showError(`ルーム参加失敗: ${error.message}`);
@@ -385,6 +394,8 @@
                 displayHand();
                 displayField(currentFieldCards);
                 displayPlayerStatus();
+            }, error => {
+                showError(`データ同期エラー: ${error.message}`);
             });
         }
 
