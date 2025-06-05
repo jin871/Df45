@@ -14,6 +14,7 @@
         #log { height: 100px; overflow-y: auto; background: #e0e0e0; padding: 10px; border-radius: 3px; }
         #errorMessage { color: red; margin: 10px 0; }
         #roomIDDisplay { margin: 10px 0; font-weight: bold; color: #2c3e50; }
+        #rankDisplay { margin: 10px 0; font-weight: bold; color: #27ae60; }
         button { padding: 5px 10px; margin: 5px; background-color: #3498db; color: white; border: none; border-radius: 3px; cursor: pointer; }
         button:disabled { background-color: #95a5a6; cursor: not-allowed; }
     </style>
@@ -31,13 +32,14 @@
         <div id="errorMessage" style="display: none;"></div>
     </div>
     <div id="gameArea" style="display: none;">
-        <div id="roomIDDisplay"></div> <!-- ルームID表示をgameArea内に移動 -->
+        <div id="roomIDDisplay"></div>
         <div id="handArea"></div>
         <div id="fieldArea">場: なし</div>
         <div id="playerStatus"></div>
         <button id="playButton">カードを出す</button>
         <button id="passButton">パス</button>
         <div id="log"></div>
+        <div id="rankDisplay"></div> <!-- 順位表示エリア -->
     </div>
 
     <script type="module">
@@ -46,7 +48,6 @@
         import { getDatabase, ref, set, update, onValue, remove, off, get } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-database.js";
         import { getAnalytics } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-analytics.js";
 
-        // Your web app's Firebase configuration
         const firebaseConfig = {
             apiKey: "AIzaSyA0D7fOnIvQFU3O29q6bb_6gj5tWN23N0s",
             authDomain: "memory-game-10e98.firebaseapp.com",
@@ -58,7 +59,6 @@
             measurementId: "G-8GN7P9PFX7"
         };
 
-        // Initialize Firebase
         let app, db, analytics;
         try {
             app = initializeApp(firebaseConfig);
@@ -86,11 +86,11 @@
         let currentTurnIndex = 0;
         let passedPlayers = [];
         let gameStarted = false;
+        let rankings = [];
 
         const suits = ["♠", "♥", "♦", "♣"];
-        const rankOrder = ["3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A", "2"];
+        const rankOrder = ["3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A", "2", "Joker1", "Joker2"]; // ジョーカーを最強に
 
-        // ログ出力
         function log(text) {
             const logDiv = document.getElementById("log");
             logDiv.textContent += `\n${new Date().toLocaleTimeString()} JST: ${text}`;
@@ -114,11 +114,10 @@
             return `${card.rank}${card.suit}`;
         }
 
-        // デッキ作成
         function createDeck() {
             const deck = [];
             for (let suit of suits) {
-                for (let rank of rankOrder) {
+                for (let rank of rankOrder.slice(0, -2)) { // Jokerを除く
                     deck.push({ suit, rank });
                 }
             }
@@ -127,12 +126,10 @@
             return deck.sort(() => Math.random() - 0.5);
         }
 
-        // 1人分の手札配布（4人用）
         function dealCardsForOnePlayer(deck, numCards) {
             return deck.slice(0, numCards);
         }
 
-        // 手札配布（4人用）
         function dealCardsForFourPlayers(players, deck) {
             const cardsPerPlayer = Math.floor(deck.length / 4);
             const hands = {};
@@ -142,12 +139,10 @@
             return hands;
         }
 
-        // フィールドのカードランク取得
         function getFieldRank(cards) {
             return cards.length > 0 ? cards[0].rank : null;
         }
 
-        // カードプレイ可能か判定
         function canPlayCards(selectedCards, fieldCards) {
             if (selectedCards.length === 0) return false;
             if (fieldCards.length === 0) return true;
@@ -159,24 +154,18 @@
             return revolution ? selectedIndex < fieldIndex : selectedIndex > fieldIndex;
         }
 
-        // 革命判定
         function checkRevolution(cards) {
             return cards.length === 4 && cards.every(c => c.rank === cards[0].rank);
         }
 
-        // 2ボンバー判定
         function isTwoBomber(cards) {
-            return cards.some(card => card.rank === "2");
+            return cards.some(card => ["2", "Joker1", "Joker2"].includes(card.rank));
         }
 
-        // 手札表示
         function displayHand() {
             const handArea = document.getElementById("handArea");
             handArea.innerHTML = "";
-            if (!myName || !playerHands[myName]) {
-                log("手札表示失敗: myNameまたはplayerHandsが未定義");
-                return;
-            }
+            if (!myName || !playerHands[myName]) return;
             playerHands[myName].forEach((card, idx) => {
                 const span = document.createElement("span");
                 span.textContent = cardToText(card);
@@ -192,13 +181,11 @@
             log(`手札更新: ${myName} の手札 (${playerHands[myName].length}枚)`);
         }
 
-        // フィールド表示
         function displayField(fieldCards) {
             const fieldArea = document.getElementById("fieldArea");
             fieldArea.textContent = fieldCards.length === 0 ? "場: なし" : `場: ${fieldCards.map(cardToText).join(" ")}`;
         }
 
-        // プレイヤーステータス表示
         function displayPlayerStatus() {
             const statusArea = document.getElementById("playerStatus");
             statusArea.innerHTML = "";
@@ -208,21 +195,28 @@
             div.textContent = statusText;
             statusArea.appendChild(div);
             turnOrder.forEach((player, i) => {
-                if (player !== myName) {
-                    const count = playerHands[player] ? playerHands[player].length : 0;
+                if (player !== myName && playerHands[player]) {
+                    const count = playerHands[player].length;
                     const otherDiv = document.createElement("div");
                     otherDiv.textContent = `${player}: ${count}枚`;
                     statusArea.appendChild(otherDiv);
                 }
             });
+            if (turnOrder[currentTurnIndex] === myName) {
+                log(`${new Date().toLocaleTimeString()} JST: ${myName} (あなた) - あなたのターンです`);
+            } else {
+                log(`${new Date().toLocaleTimeString()} JST: ${turnOrder[currentTurnIndex]} - ターン中`);
+            }
             document.getElementById("playButton").disabled = turnOrder[currentTurnIndex] !== myName;
             document.getElementById("passButton").disabled = turnOrder[currentTurnIndex] !== myName;
-            log(`${new Date().toLocaleTimeString()} JST: ${turnOrder[currentTurnIndex]}${myTurn ? " (あなた)" : ""} - ${myTurn ? "あなたのターン" : ""}`);
+        } 
+        function displayRankings() {
+            const rankDisplay = document.getElementById("rankDisplay");
+            rankDisplay.textContent = rankings.length > 0 ? `順位: ${rankings.map((p, i) => `${i + 1}位: ${p}`).join(", ")}` : "";
         }
 
         let selectedIndices = [];
 
-        // カードを出す
         document.getElementById("playButton").onclick = async () => {
             if (turnOrder[currentTurnIndex] !== myName) return;
             const selectedCards = selectedIndices.map(idx => playerHands[myName][idx]);
@@ -235,7 +229,7 @@
                 hands: playerHands,
                 fieldCards: selectedCards,
                 passedPlayers: [],
-                currentTurnIndex: (currentTurnIndex + 1) % 4
+                currentTurnIndex: (currentTurnIndex + 1) % turnOrder.length
             };
             if (checkRevolution(selectedCards)) {
                 updates.revolution = !revolution;
@@ -246,36 +240,38 @@
                 log("2ボンバー！7渡しが発動");
             }
             if (playerHands[myName].length === 0) {
-                log(`${myName} が上がりました！`);
-                try {
+                rankings.push(myName);
+                if (rankings.length === turnOrder.length) {
+                    log(`ゲーム終了！最終順位: ${rankings.map((p, i) => `${i + 1}位: ${p}`).join(", ")}`);
                     await remove(roomRef);
-                    showError(`${myName} の勝利でゲーム終了`);
                     document.getElementById("gameArea").style.display = "none";
                     document.getElementById("lobbyArea").style.display = "block";
-                } catch (error) {
-                    showError(`ゲーム終了失敗: ${error.message}`);
+                } else {
+                    turnOrder = turnOrder.filter(p => p !== myName);
+                    updates.turnOrder = turnOrder;
+                    log(`${myName} が${rankings.length}位で上がりました！`);
                 }
-                return;
             }
             try {
                 await update(roomRef, updates);
                 selectedIndices = [];
                 displayHand();
+                displayRankings();
+                displayPlayerStatus();
                 log(`カード出しました: ${selectedCards.map(cardToText).join(" ")}`);
             } catch (error) {
                 showError(`カードプレイ失敗: ${error.message}`);
             }
         };
 
-        // パス
         document.getElementById("passButton").onclick = async () => {
             if (turnOrder[currentTurnIndex] !== myName) return;
             const newPassedPlayers = [...passedPlayers, myName];
             const updates = {
                 passedPlayers: newPassedPlayers,
-                currentTurnIndex: (currentTurnIndex + 1) % 4
+                currentTurnIndex: (currentTurnIndex + 1) % turnOrder.length
             };
-            if (newPassedPlayers.length === 3) { // 4人中3人がパスでリセット
+            if (newPassedPlayers.length === turnOrder.length - 1) {
                 updates.fieldCards = [];
                 updates.passedPlayers = [];
                 updates.sevenPassActive = false;
@@ -284,16 +280,16 @@
             try {
                 await update(roomRef, updates);
                 log("パスしました");
+                displayPlayerStatus();
             } catch (error) {
                 showError(`パス失敗: ${error.message}`);
             }
         };
 
-        // ルーム作成
         document.getElementById("createRoomButton").onclick = async () => {
             const playerName = document.getElementById("playerName").value.trim();
             const roomIdInput = document.getElementById("roomIDInput").value.trim();
-            const roomId = roomIdInput || Math.random().toString(36).substring(2, 10); // 空ならランダム生成
+            const roomId = roomIdInput || Math.random().toString(36).substring(2, 10);
             if (!playerName) {
                 showError("プレイヤー名を入力してください");
                 return;
@@ -311,81 +307,83 @@
                 const initialState = {
                     players: [myName],
                     hands: playerHands,
-                    deck: deck.slice(Math.floor(deck.length / 4)), // 残りのデッキを保存
+                    deck: deck.slice(Math.floor(deck.length / 4)),
                     fieldCards: [],
                     turnOrder: [myName],
                     currentTurnIndex: 0,
                     passedPlayers: [],
                     revolution: false,
                     sevenPassActive: false,
-                    gameStarted: false
+                    gameStarted: false,
+                    rankings: []
                 };
                 await set(roomRef, initialState);
-                displayRoomId(roomId); // ルームIDを表示
+                displayRoomId(roomId);
                 document.getElementById("lobbyArea").style.display = "none";
                 document.getElementById("gameArea").style.display = "block";
-                displayHand(); // 自分に手札を表示
-                displayPlayerStatus(); // ステータスを表示
+                displayHand();
+                displayPlayerStatus();
                 log(`ルーム作成: ${roomId}, プレイヤー1 (${myName}) に手札配布 (${playerHands[myName].length}枚)`);
                 listenRoom();
             } catch (error) {
                 showError(`ルーム作成失敗: ${error.message}`);
             }
         };
-        // ルーム参加
-document.getElementById("joinButton").onclick = async () => {
-    const playerName = document.getElementById("playerName").value.trim();
-    const roomId = document.getElementById("roomIDInput").value.trim();
-    if (!playerName || !roomId) {
-        showError("プレイヤー名とルームIDを入力してください");
-        return;
-    }
-    myName = playerName;
-    roomRef = ref(db, `rooms/${roomId}`);
-    try {
-        const snapshot = await get(roomRef);
-        if (!snapshot.exists()) {
-            showError("ルームが存在しません");
-            return;
-        }
-        const room = snapshot.val();
-        if (room.players.length >= 4) {
-            showError("ルームが満員です");
-            return;
-        }
-        if (room.players.includes(myName)) {
-            showError("このプレイヤー名は既に使用されています");
-            return;
-        }
-        room.players.push(myName);
-        const remainingDeck = [...room.deck]; // デッキをコピー
-        const cardsPerPlayer = Math.floor(remainingDeck.length / (4 - room.players.length + 1)); // 残りのプレイヤー数で割る
-        playerHands[myName] = dealCardsForOnePlayer(remainingDeck, cardsPerPlayer);
-        room.hands = { ...room.hands, [myName]: playerHands[myName] }; // 既存の手札を保持しつつ追加
-        room.turnOrder = room.players;
-        if (room.players.length === 4) {
-            room.gameStarted = true;
-        }
-        const updates = {
-            players: room.players,
-            hands: room.hands,
-            turnOrder: room.turnOrder,
-            gameStarted: room.gameStarted,
-            deck: remainingDeck.slice(cardsPerPlayer) // 残りのデッキを更新
+
+        document.getElementById("joinButton").onclick = async () => {
+            const playerName = document.getElementById("playerName").value.trim();
+            const roomId = document.getElementById("roomIDInput").value.trim();
+            if (!playerName || !roomId) {
+                showError("プレイヤー名とルームIDを入力してください");
+                return;
+            }
+            myName = playerName;
+            roomRef = ref(db, `rooms/${roomId}`);
+            try {
+                const snapshot = await get(roomRef);
+                if (!snapshot.exists()) {
+                    showError("ルームが存在しません");
+                    return;
+                }
+                const room = snapshot.val();
+                if (room.players.length >= 4) {
+                    showError("ルームが満員です");
+                    return;
+                }
+                if (room.players.includes(myName)) {
+                    showError("このプレイヤー名は既に使用されています");
+                    return;
+                }
+                room.players.push(myName);
+                const remainingDeck = [...room.deck];
+                const cardsPerPlayer = Math.floor(remainingDeck.length / (4 - room.players.length + 1));
+                playerHands[myName] = dealCardsForOnePlayer(remainingDeck, cardsPerPlayer);
+                room.hands = { ...room.hands, [myName]: playerHands[myName] };
+                room.turnOrder = room.players;
+                if (room.players.length === 4) {
+                    room.gameStarted = true;
+                }
+                const updates = {
+                    players: room.players,
+                    hands: room.hands,
+                    turnOrder: room.turnOrder,
+                    gameStarted: room.gameStarted,
+                    deck: remainingDeck.slice(cardsPerPlayer),
+                    rankings: room.rankings || []
+                };
+                await update(roomRef, updates);
+                displayRoomId(roomId);
+                document.getElementById("lobbyArea").style.display = "none";
+                document.getElementById("gameArea").style.display = "block";
+                displayHand();
+                displayPlayerStatus();
+                log(`ルーム参加: ${roomId}, プレイヤー${room.players.length} (${myName}) に手札配布 (${playerHands[myName].length}枚)`);
+                listenRoom();
+            } catch (error) {
+                showError(`ルーム参加失敗: ${error.message}`);
+            }
         };
-        await update(roomRef, updates);
-        displayRoomId(roomId);
-        document.getElementById("lobbyArea").style.display = "none";
-        document.getElementById("gameArea").style.display = "block";
-        displayHand(); // 参加者に手札を表示
-        displayPlayerStatus(); // ステータスを表示
-        log(`ルーム参加: ${roomId}, プレイヤー${room.players.length} (${myName}) に手札配布 (${playerHands[myName].length}枚)`);
-        listenRoom();
-    } catch (error) {
-        showError(`ルーム参加失敗: ${error.message}`);
-    }
-};
-        // ルームの変更を監視
+
         function listenRoom() {
             onValue(roomRef, (snapshot) => {
                 const room = snapshot.val();
@@ -403,15 +401,16 @@ document.getElementById("joinButton").onclick = async () => {
                 currentTurnIndex = room.currentTurnIndex || 0;
                 passedPlayers = room.passedPlayers || [];
                 gameStarted = room.gameStarted || false;
+                rankings = room.rankings || [];
                 displayHand();
                 displayField(currentFieldCards);
                 displayPlayerStatus();
+                displayRankings();
             }, (error) => {
                 showError(`データ同期エラー: ${error.message}`);
             });
         }
 
-        // ページ離脱時のクリーンアップ
         window.onbeforeunload = () => {
             if (roomRef && myName) {
                 off(roomRef);
@@ -433,7 +432,3 @@ document.getElementById("joinButton").onclick = async () => {
     </script>
 </body>
 </html>
-
-
-    
-                
