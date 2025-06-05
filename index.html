@@ -27,11 +27,11 @@
             ルームID：<input type="text" id="roomIDInput" placeholder="ルームIDを入力">
             <button id="createRoomButton">ルーム作成</button>
             <button id="joinButton">ルームに参加</button>
-            <div id="roomIDDisplay"></div>
         </div>
         <div id="errorMessage" style="display: none;"></div>
     </div>
     <div id="gameArea" style="display: none;">
+        <div id="roomIDDisplay"></div> <!-- ルームID表示をgameArea内に移動 -->
         <div id="handArea"></div>
         <div id="fieldArea">場: なし</div>
         <div id="playerStatus"></div>
@@ -267,7 +267,6 @@
             }
         };
 
-
         // パス
         document.getElementById("passButton").onclick = async () => {
             if (turnOrder[currentTurnIndex] !== myName) return;
@@ -333,7 +332,6 @@
                 showError(`ルーム作成失敗: ${error.message}`);
             }
         };
-
         // ルーム参加
         document.getElementById("joinButton").onclick = async () => {
             const playerName = document.getElementById("playerName").value.trim();
@@ -436,3 +434,7 @@
     </script>
 </body>
 </html>
+
+
+    
+                
