@@ -244,7 +244,7 @@
                     showError(`ゲーム終了失敗: ${error.message}`);
                 }
                 return;
-                }
+            }
 
             try {
                 await roomRef.update(updates);
@@ -281,7 +281,8 @@
         // ルーム作成
         document.getElementById("createRoomButton").onclick = async () => {
             const playerName = document.getElementById("playerName").value.trim();
-            const roomId = document.getElementById("roomIDInput").value.trim() || Math.random().toString(36).substring(2, 10);
+            const roomIdInput = document.getElementById("roomIDInput").value.trim();
+            const roomId = roomIdInput || Math.random().toString(36).substring(2, 10); // 空ならランダム生成
             if (!playerName) {
                 showError("プレイヤー名を入力してください");
                 return;
@@ -299,7 +300,7 @@
                 const initialState = {
                     players: [myName],
                     hands: playerHands,
-                    deck: deck,
+                    deck: deck.slice(Math.floor(deck.length / 4)), // 残りのデッキを保存
                     fieldCards: [],
                     turnOrder: [myName],
                     currentTurnIndex: 0,
@@ -309,11 +310,10 @@
                     gameStarted: false
                 };
                 await roomRef.set(initialState);
-                displayRoomId(roomId);
+                displayRoomId(roomId); // ルームIDを表示
                 document.getElementById("lobbyArea").style.display = "none";
                 document.getElementById("gameArea").style.display = "block";
-                // 手札を即座に表示
-                displayHand();
+                displayHand(); // 自分に手札を表示
                 log(`ルーム作成: ${roomId}, プレイヤー1 (${myName}) に手札配布 (${playerHands[myName].length}枚)`);
                 listenRoom();
             } catch (error) {
@@ -349,23 +349,25 @@
                 }
                 room.players.push(myName);
                 const remainingDeck = room.deck;
-                const cardsPerPlayer = Math.floor(remainingDeck.length / (4 - (room.players.length - 1)));
+                const cardsPerPlayer = Math.floor(remainingDeck.length / (4 - room.players.length));
                 playerHands[myName] = dealCardsForOnePlayer(remainingDeck, cardsPerPlayer);
                 room.hands[myName] = playerHands[myName];
                 room.turnOrder = room.players;
                 if (room.players.length === 4) {
                     room.gameStarted = true;
                 }
-                await roomRef.update({
+                const updates = {
                     players: room.players,
                     hands: room.hands,
                     turnOrder: room.turnOrder,
-                    gameStarted: room.gameStarted
-                });
+                    gameStarted: room.gameStarted,
+                    deck: remainingDeck.slice(cardsPerPlayer) // 残りのデッキを更新
+                };
+                await roomRef.update(updates);
                 displayRoomId(roomId);
                 document.getElementById("lobbyArea").style.display = "none";
                 document.getElementById("gameArea").style.display = "block";
-                displayHand(); // 参加時に手札を表示
+                displayHand(); // 参加者に手札を表示
                 log(`ルーム参加: ${roomId}, プレイヤー${room.players.length} (${myName}) に手札配布 (${playerHands[myName].length}枚)`);
                 listenRoom();
             } catch (error) {
@@ -415,3 +417,4 @@
     </script>
 </body>
 </html>
+            
