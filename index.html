@@ -39,7 +39,7 @@
         <button id="playButton">カードを出す</button>
         <button id="passButton">パス</button>
         <div id="log"></div>
-        <div id="rankDisplay"></div> <!-- 順位表示エリア -->
+        <div id="rankDisplay"></div>
     </div>
 
     <script type="module">
@@ -89,7 +89,7 @@
         let rankings = [];
 
         const suits = ["♠", "♥", "♦", "♣"];
-        const rankOrder = ["3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A", "2", "Joker1", "Joker2"]; // ジョーカーを最強に
+        const rankOrder = ["3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A", "2", "Joker1", "Joker2"]; // ジョーカー1,2を最強に
 
         function log(text) {
             const logDiv = document.getElementById("log");
@@ -151,11 +151,16 @@
             const selectedRank = selectedCards[0].rank;
             const fieldIndex = rankOrder.indexOf(fieldRank);
             const selectedIndex = rankOrder.indexOf(selectedRank);
+            // ジョーカーが含まれる場合、常に最強として扱う（革命時は最弱）
+            const hasJoker = selectedCards.some(card => ["Joker1", "Joker2"].includes(card.rank));
+            if (hasJoker) {
+                return revolution ? selectedIndex === 0 : selectedIndex >= rankOrder.length - 2;
+            }
             return revolution ? selectedIndex < fieldIndex : selectedIndex > fieldIndex;
         }
 
         function checkRevolution(cards) {
-            return cards.length === 4 && cards.every(c => c.rank === cards[0].rank);
+            return cards.length === 4 && cards.every(c => c.rank === cards[0].rank && !["Joker1", "Joker2"].includes(c.rank));
         }
 
         function isTwoBomber(cards) {
@@ -209,7 +214,8 @@
             }
             document.getElementById("playButton").disabled = turnOrder[currentTurnIndex] !== myName;
             document.getElementById("passButton").disabled = turnOrder[currentTurnIndex] !== myName;
-        } 
+        }
+
         function displayRankings() {
             const rankDisplay = document.getElementById("rankDisplay");
             rankDisplay.textContent = rankings.length > 0 ? `順位: ${rankings.map((p, i) => `${i + 1}位: ${p}`).join(", ")}` : "";
@@ -409,8 +415,7 @@
             }, (error) => {
                 showError(`データ同期エラー: ${error.message}`);
             });
-        }
-
+                }
         window.onbeforeunload = () => {
             if (roomRef && myName) {
                 off(roomRef);
