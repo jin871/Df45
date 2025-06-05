@@ -37,11 +37,13 @@
         <div id="log" class="log"></div>
     </div>
 
-    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-analytics.js"></script>
+    <!-- モジュールとしてスクリプトを読み込む -->
+    <script type="module">
+        // Firebaseのインポート
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js";
+        import { getDatabase, ref, set, update, onValue, off, transaction } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-database.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-analytics.js";
 
-    <script>
         // Your web app's Firebase configuration
         const firebaseConfig = {
             apiKey: "AIzaSyA0D7fOnIvQFU3O29q6bb_6gj5tWN23N0s",
@@ -55,22 +57,23 @@
         };
 
         // Initialize Firebase
+        let app, db, analytics;
         try {
-            const app = firebase.initializeApp(firebaseConfig);
-            const analytics = firebase.analytics(app);
+            app = initializeApp(firebaseConfig);
+            analytics = getAnalytics(app);
             log("firebase analytics初期化成功");
         } catch (analyticsError) {
             log("firebase analytics初期化失敗 (スキップ): " + analyticsError.message);
         }
 
         try {
+            db = getDatabase(app);
             log("Firebase初期化");
         } catch (error) {
             showError("Firebase初期化失敗: " + error.message);
             throw error;
         }
 
-        const db = firebase.database();
         let roomRef = null;
         let myName = null;
         let playerHands = {};
@@ -245,9 +248,8 @@
                 }
                 return;
             }
-
             try {
-                await roomRef.update(updates);
+                await update(roomRef, updates);
                 selectedIndices = [];
                 displayHand();
                 log(`カード出しました: ${selectedCards.map(cardToText).join(" ")}`);
@@ -271,7 +273,7 @@
                 log("場リセット");
             }
             try {
-                await roomRef.update(updates);
+                await update(roomRef, updates);
                 log("パスしました");
             } catch (error) {
                 showError(`パス失敗: ${error.message}`);
@@ -288,10 +290,10 @@
                 return;
             }
             myName = playerName;
-            roomRef = db.ref(`rooms/${roomId}`);
+            roomRef = ref(db, `rooms/${roomId}`);
             try {
-                const snapshot = await roomRef.once("value");
-                if (snapshot.exists()) {
+                const snapshot = await onValue(ref(db, `rooms/${roomId}`), (snap) => snap.val(), { onlyOnce: true });
+                if (snapshot) {
                     showError("このルームIDは既に使用されています");
                     return;
                 }
@@ -309,7 +311,7 @@
                     sevenPassActive: false,
                     gameStarted: false
                 };
-                await roomRef.set(initialState);
+                await set(roomRef, initialState);
                 displayRoomId(roomId); // ルームIDを表示
                 document.getElementById("lobbyArea").style.display = "none";
                 document.getElementById("gameArea").style.display = "block";
@@ -331,14 +333,14 @@
                 return;
             }
             myName = playerName;
-            roomRef = db.ref(`rooms/${roomId}`);
+            roomRef = ref(db, `rooms/${roomId}`);
             try {
-                const snapshot = await roomRef.once("value");
-                if (!snapshot.exists()) {
+                const snapshot = await onValue(ref(db, `rooms/${roomId}`), (snap) => snap.val(), { onlyOnce: true });
+                if (!snapshot) {
                     showError("ルームが存在しません");
                     return;
                 }
-                const room = snapshot.val();
+                const room = snapshot;
                 if (room.players.length >= 4) {
                     showError("ルームが満員です");
                     return;
@@ -363,7 +365,7 @@
                     gameStarted: room.gameStarted,
                     deck: remainingDeck.slice(cardsPerPlayer) // 残りのデッキを更新
                 };
-                await roomRef.update(updates);
+                await update(roomRef, updates);
                 displayRoomId(roomId);
                 document.getElementById("lobbyArea").style.display = "none";
                 document.getElementById("gameArea").style.display = "block";
@@ -377,7 +379,7 @@
 
         // ルームの変更を監視
         function listenRoom() {
-            roomRef.on("value", snapshot => {
+            onValue(roomRef, (snapshot) => {
                 const room = snapshot.val();
                 if (!room) {
                     log("ルームが削除されました");
@@ -396,7 +398,7 @@
                 displayHand();
                 displayField(currentFieldCards);
                 displayPlayerStatus();
-            }, error => {
+            }, (error) => {
                 showError(`データ同期エラー: ${error.message}`);
             });
         }
@@ -404,8 +406,8 @@
         // ページ離脱時のクリーンアップ
         window.onbeforeunload = () => {
             if (roomRef && myName) {
-                roomRef.off();
-                roomRef.transaction(room => {
+                off(roomRef);
+                transaction(roomRef, (room) => {
                     if (room) {
                         room.players = room.players.filter(p => p !== myName);
                         if (room.players.length === 0) return null;
@@ -417,4 +419,3 @@
     </script>
 </body>
 </html>
-            
